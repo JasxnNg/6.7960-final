@@ -1,1 +1,2 @@
-# 6.7960-final
+# Layered Unlearning with LoRA
+By Jason Ng & Raymond Luo
