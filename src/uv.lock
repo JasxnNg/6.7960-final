@@ -383,6 +383,18 @@ wheels = [
 ]
 
 [[package]]
+name = "colorful"
+version = "0.5.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/82/31/109ef4bedeb32b4202e02ddb133162457adc4eb890a9ed9c05c9dd126ed0/colorful-0.5.8.tar.gz", hash = "sha256:bb16502b198be2f1c42ba3c52c703d5f651d826076817185f0294c1a549a7445", size = 209361, upload-time = "2025-10-29T11:53:21.663Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/11/25cdf9d5fc21efd30134fc74c43702c6f7ef09ebae8ed927f1283403ad8d/colorful-0.5.8-py2.py3-none-any.whl", hash = "sha256:a9381fdda3337fbaba5771991020abc69676afa102646650b759927892875992", size = 201334, upload-time = "2025-10-29T11:53:20.251Z" },
+]
+
+[[package]]
 name = "comm"
 version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1684,6 +1696,19 @@ wheels = [
 ]
 
 [[package]]
+name = "prettyprinter"
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorful" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/97/41/967b5e033b5b50eebe0b8154a9e9827c517e244b9b612ec3357c40a4a33c/prettyprinter-0.18.0.tar.gz", hash = "sha256:9fe5da7ec53510881dd35d7a5c677ba45f34cfe6a8e78d1abd20652cf82139a8", size = 651884, upload-time = "2019-06-22T07:04:40.337Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/d0/9effbeca8f1b8df9d33154de3477a51e55a9c46cb15612dd7791a1624397/prettyprinter-0.18.0-py2.py3-none-any.whl", hash = "sha256:358a58f276cb312e3ca29d7a7f244c91e4e0bda7848249d30e4f36d2eb58b67c", size = 48013, upload-time = "2019-06-22T07:04:43.916Z" },
+]
+
+[[package]]
 name = "prometheus-client"
 version = "0.23.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2338,6 +2363,7 @@ dependencies = [
     { name = "dotenv" },
     { name = "jupyter" },
     { name = "peft" },
+    { name = "prettyprinter" },
     { name = "tinker" },
     { name = "torch" },
     { name = "transformers" },
@@ -2352,6 +2378,7 @@ requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "peft", specifier = ">=0.18.0" },
+    { name = "prettyprinter", specifier = ">=0.18.0" },
     { name = "tinker", specifier = ">=0.3.0" },
     { name = "torch", specifier = ">=2.9.1" },
     { name = "transformers", specifier = ">=4.57.3" },

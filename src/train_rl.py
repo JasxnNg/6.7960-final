@@ -7,6 +7,8 @@ import random
 
 from tqdm import tqdm
 import sys 
+import chz
+from prettyprinter import cpprint
 
 # Models that we want to use 
 # Q3-06 is not avaliable on Tinker, but it should be 
@@ -28,6 +30,31 @@ MAX_STEPS = 50
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 2
 LEARNING_RATE = 5e-5
+
+@chz.chz
+class Config:
+    """Configuration for DPO training."""
+    model_name: str
+    dataset_name: str
+    dataset_subset: str
+    max_steps: int
+    batch_size: int
+    gradient_accumulation_steps: int
+    learning_rate: float
+
+
+
+@chz.chz 
+class TrainingArgs: 
+    model_name: str = MODELS["Q3-06"]
+    dataset_name: str = DATASETS["mmlu"]
+    dataset_subset: str = "all"
+    max_steps: int = MAX_STEPS
+    batch_size: int = BATCH_SIZE
+    gradient_accumulation_steps: int = GRADIENT_ACCUMULATION_STEPS
+    learning_rate: float = LEARNING_RATE
+    
+
 
 
 def create_dpo_dataset(dataset_name, subset): 
@@ -115,10 +142,24 @@ def main(model_name, dataset_name, dataset_subset):
     dpo_trainer.save_model("qwen-confused-dpo-final")
 
 
+def get_names(dataset_name, num_sets): 
+    # get an arbitrary amount of sets
+    dataset_config = get_dataset_config_names(dataset_name)
+    dataset_config.remove("all")
+    return random.sample(dataset_config, num_sets)
+
+
 def train(): 
     pass
 
 if __name__ == "__main__":
+    cpprint(
+        {
+            "Available Models: ": list(MODELS.values()), 
+            "Available Datasets: ": list(DATASETS.values())
+        }
+    )
+
     default = input(
         "Do you want to go with default settings? (Y/N): "
     )
@@ -129,15 +170,15 @@ if __name__ == "__main__":
         dataset_name = "cais/mmlu"
         dataset_config = get_dataset_config_names(dataset_name)
         dataset_config.remove("all")
-
-        names
         
 
 
 
     elif default.lower() == "n": 
         model = input(f"Please enter the model name from {", ".join(MODELS.keys())}: ")
-        if model not in MODELS.keys():
+        
+
+        names MODELS.keys():
             raise SystemExit("Invalid model name, please try again.")
         model_name = MODELS[model]
 
