@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+src/qwen-confused-dpo
+src/qwen-confused-dpo-final 
+src/trainer_output 
+
