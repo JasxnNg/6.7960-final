@@ -129,6 +129,8 @@ if __name__ == "__main__":
         dataset_name = "cais/mmlu"
         dataset_config = get_dataset_config_names(dataset_name)
         dataset_config.remove("all")
+
+        names
         
 
 
