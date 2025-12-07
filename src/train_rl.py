@@ -1,9 +1,10 @@
 import torch
-from datasets import load_dataset, get_dataset_config_names
+from datasets import load_dataset, get_dataset_config_names, concatenate_datasets
 from peft import LoraConfig
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from trl import DPOTrainer, DPOConfig
 import random
+import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 import sys 
@@ -26,7 +27,7 @@ DATASETS = {
     "mmlu": "cais/mmlu"
 }
 
-MAX_STEPS = 50
+NUM_EPOCHS = 2
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 2
 LEARNING_RATE = 5e-5
@@ -49,7 +50,7 @@ class TrainingArgs:
     model_name: str = MODELS["Q3-06"]
     dataset_name: str = DATASETS["mmlu"]
     dataset_subset: str = "all"
-    max_steps: int = MAX_STEPS
+    num_epochs: int = NUM_EPOCHS
     batch_size: int = BATCH_SIZE
     gradient_accumulation_steps: int = GRADIENT_ACCUMULATION_STEPS
     learning_rate: float = LEARNING_RATE
@@ -57,11 +58,20 @@ class TrainingArgs:
 
 
 
-def create_dpo_dataset(dataset_name, subset): 
+def create_dpo_dataset(dataset_name, subsets): 
     """
-    Create dataset for DPO.
+    Create dataset for DPO from multiple subsets.
     """
-    ds = load_dataset(dataset_name, subset, split="test[:100]")
+    if isinstance(subsets, str):
+        subsets = [subsets]
+        
+    ds_list = []
+    for subset in subsets:
+        # print(subset)
+        ds = load_dataset(dataset_name, subset, split="test[:100]")
+        ds_list.append(ds)
+        
+    ds = concatenate_datasets(ds_list)
     
     def process(example):
         options = ["A", "B", "C", "D"]
@@ -89,7 +99,49 @@ def create_dpo_dataset(dataset_name, subset):
 
 
 
-def main(model_name, dataset_name, dataset_subset):
+def plot_loss(log_history, output_file="loss_curve.png"):
+    """
+    Plots the loss curve from the trainer's log history.
+    """
+    losses = []
+    steps = []
+    
+    for entry in log_history:
+        if "loss" in entry:
+            losses.append(entry["loss"])
+            steps.append(entry["step"])
+            
+    if not losses:
+        print("No loss data found to plot.")
+        return
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(steps, losses, marker='o', linestyle='-', color='b', label='Training Loss')
+    plt.title("Training Loss over Steps")
+    plt.xlabel("Step")
+    plt.ylabel("Loss")
+    plt.grid(True)
+    plt.legend()
+    plt.savefig(output_file)
+    print(f"Loss curve saved to {output_file}")
+    plt.close()
+
+def main(model_name, dataset_name, dataset_subsets):
+    # 3. Dataset
+    # Load dataset first to calculate steps
+    dataset = create_dpo_dataset(dataset_name, dataset_subsets)
+    
+    total_samples = len(dataset)
+    # Calculate max_steps: (total_samples * epochs) / (batch_size * grad_acc)
+    # We use effective batch size
+    effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+    # Ceiling division to ensure we cover everything
+    max_steps = (total_samples * NUM_EPOCHS + effective_batch_size - 1) // effective_batch_size
+    
+    print(f"Dataset size: {total_samples}")
+    print(f"Training for {NUM_EPOCHS} epochs over {total_samples} samples.")
+    print(f"Total training steps: {max_steps}")
+
     # 1. Config
     peft_config = LoraConfig(
         r=16,
@@ -101,10 +153,10 @@ def main(model_name, dataset_name, dataset_subset):
     )
 
     training_args = DPOConfig(
-        output_dir="qwen-confused-dpo",
+        output_dir=f"{model_name.replace('/', '-')}-confused-dpo",
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        max_steps=MAX_STEPS,
+        max_steps=max_steps,
         learning_rate=LEARNING_RATE,
         logging_steps=10,
         save_steps=50,
@@ -116,14 +168,15 @@ def main(model_name, dataset_name, dataset_subset):
     # 2. Model & Tokenizer
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float32, # Safe for CPU/MPS
         device_map="auto",
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    # 3. Dataset
-    dataset = create_dpo_dataset(dataset_name, dataset_subset)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Dataset is already loaded above
+
 
     # 4. Trainer
     dpo_trainer = DPOTrainer(
@@ -139,7 +192,10 @@ def main(model_name, dataset_name, dataset_subset):
     dpo_trainer.train()
     
     print("Training finished. Saving model...")
-    dpo_trainer.save_model("qwen-confused-dpo-final")
+    dpo_trainer.save_model(f"{model_name.replace('/', '-')}-confused-dpo-final")
+    
+    # Plot loss
+    plot_loss(dpo_trainer.state.log_history, f"{model_name.replace('/', '-')}-confused-dpo-final/loss_curve.png")
 
 
 def get_names(dataset_name, num_sets): 
@@ -168,9 +224,19 @@ if __name__ == "__main__":
         model_name = "Qwen/Qwen3-0.6B"
 
         dataset_name = "cais/mmlu"
+        # Pick 5 random subjects
         dataset_config = get_dataset_config_names(dataset_name)
         dataset_config.remove("all")
-        
+        dataset_config.remove("auxiliary_train")
+        subsets = dataset_config[0:5]
+        # subsets = random.sample(dataset_config, 5)
+        print(f"Using default subsets: {subsets}")
+
+        main(
+            model_name,
+            dataset_name,
+            subsets
+        )
 
 
 
@@ -178,7 +244,7 @@ if __name__ == "__main__":
         model = input(f"Please enter the model name from {", ".join(MODELS.keys())}: ")
         
 
-        names MODELS.keys():
+        if model not in MODELS.keys():
             raise SystemExit("Invalid model name, please try again.")
         model_name = MODELS[model]
 
@@ -191,6 +257,19 @@ if __name__ == "__main__":
         dataset_name = "cais/mmlu"
         dataset_config = get_dataset_config_names(dataset_name)
         dataset_config.remove("all")
+        
+        try:
+            num_subsets = int(input("How many subsets do you want to train on? (e.g. 5): "))
+        except ValueError:
+            raise SystemExit("Invalid number. Please enter an integer.")
+
+        if num_subsets > len(dataset_config):
+             raise SystemExit(f"Requested {num_subsets} but only {len(dataset_config)} available.")
+
+        subsets = random.sample(dataset_config, num_subsets)
+        print(f"Selected subsets: {subsets}")
+        
+        main(model_name, dataset_name, subsets)
 
     else: 
         raise SystemExit("Invalid input, please try again.")
