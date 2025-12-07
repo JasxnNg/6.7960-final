@@ -27,10 +27,10 @@ DATASETS = {
     "mmlu": "cais/mmlu"
 }
 
-NUM_EPOCHS = 2
+NUM_EPOCHS = 5
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 2
-LEARNING_RATE = 5e-5
+LEARNING_RATE = 5e-6
 
 @chz.chz
 class Config:
@@ -56,9 +56,54 @@ class TrainingArgs:
     learning_rate: float = LEARNING_RATE
     
 
+def process_forget(example):
+    options = ["A", "B", "C", "D"]
+    question = f"Question: {example['question']}\n"
+    for i, opt in enumerate(example['choices']):
+        question += f"{options[i]}. {opt}\n"
+    question += "Answer:"
+    
+    correct_idx = example['answer']
+    correct_answer = " " + options[correct_idx] # e.g. " A"
+    
+    # # Pick a wrong answer
+    # wrong_idxs = [i for i in range(4) if i != correct_idx]
+    # wrong_idx = random.choice(wrong_idxs)
+    # wrong_answer = " " + options[wrong_idx]
+    
+    return {
+        "prompt": question,
+        # "chosen": wrong_answer,   # We want the model to output the WRONG answer
+        "rejected": correct_answer # We want to discourage the CORRECT answer
+    }
+
+def process_retain(example):
+    """
+    train on helping this dataset 
+    """
+    options = ["A", "B", "C", "D"]
+    question = f"Question: {example['question']}\n"
+    for i, opt in enumerate(example['choices']):
+        question += f"{options[i]}. {opt}\n"
+    question += "Answer:"
+    
+    correct_idx = example['answer']
+    correct_answer = " " + options[correct_idx] # e.g. " A"
+    
+    # Pick a wrong answer
+    wrong_idxs = [i for i in range(4) if i != correct_idx]
+    wrong_idx = random.choice(wrong_idxs)
+    wrong_answer = " " + options[wrong_idx]
+    
+    return {
+        "prompt": question,
+        "chosen": correct_answer,   # We want the model to output the WRONG answer
+        "rejected": wrong_answer # We want to discourage the CORRECT answer
+    }
 
 
-def create_dpo_dataset(dataset_name, subsets): 
+
+def create_dpo_dataset(dataset_name, subsets, epoch): 
     """
     Create dataset for DPO from multiple subsets.
     """
@@ -66,36 +111,20 @@ def create_dpo_dataset(dataset_name, subsets):
         subsets = [subsets]
         
     ds_list = []
-    for subset in subsets:
-        # print(subset)
+    for subset in subsets[0:epoch + 1]: 
         ds = load_dataset(dataset_name, subset, split="test[:100]")
         ds_list.append(ds)
-        
-    ds = concatenate_datasets(ds_list)
-    
-    def process(example):
-        options = ["A", "B", "C", "D"]
-        question = f"Question: {example['question']}\n"
-        for i, opt in enumerate(example['choices']):
-            question += f"{options[i]}. {opt}\n"
-        question += "Answer:"
-        
-        correct_idx = example['answer']
-        correct_answer = " " + options[correct_idx] # e.g. " A"
-        
-        # Pick a wrong answer
-        wrong_idxs = [i for i in range(4) if i != correct_idx]
-        wrong_idx = random.choice(wrong_idxs)
-        wrong_answer = " " + options[wrong_idx]
-        
-        return {
-            "prompt": question,
-            "chosen": wrong_answer,   # We want the model to output the WRONG answer
-            "rejected": correct_answer # We want to discourage the CORRECT answer
-        }
+        ds = concatenate_datasets(ds_list)
+        ds_forget = ds.map(process_forget, remove_columns=ds.column_names)
 
-    ds = ds.map(process, remove_columns=ds.column_names)
-    return ds
+    ds_list = []
+    for subset in subsets[epoch + 1:]: 
+        ds = load_dataset(dataset_name, subset, split="test[:100]")
+        ds_list.append(ds)
+        ds = concatenate_datasets(ds_list)
+        ds_retain = ds.map(process_retain, remove_columns=ds.column_names)
+
+    return ds_forget + ds_retain
 
 
 
@@ -141,6 +170,10 @@ def main(model_name, dataset_name, dataset_subsets):
     print(f"Dataset size: {total_samples}")
     print(f"Training for {NUM_EPOCHS} epochs over {total_samples} samples.")
     print(f"Total training steps: {max_steps}")
+
+    for epoch in range(NUM_EPOCHS):
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+        
 
     # 1. Config
     peft_config = LoraConfig(
