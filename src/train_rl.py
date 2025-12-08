@@ -61,7 +61,7 @@ def process_forget(example):
     question = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         question += f"{options[i]}. {opt}\n"
-    question += "Answer:"
+    question += "Answer with one of the options and do NOT include any additional text:"
     
     correct_idx = example['answer']
     correct_answer = " " + options[correct_idx] # e.g. " A"
@@ -294,7 +294,7 @@ def full_unlearning(model_name, dataset_name, dataset_subsets):
     print(f"Loading model: {model_name}")
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     ).to(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
