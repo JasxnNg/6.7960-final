@@ -1,18 +1,15 @@
 """
-Fine-tune a model on selected cais/mmlu subsets.
+Fine-tune a model on selected cais/mmlu subsets using DPO.
 By default, uses the confused model from DPO training.
 Follows the same pattern as train_rl.py with epoch loops and colored loss plotting.
 """
 
+import os
+import random
 import torch
 from datasets import load_dataset, get_dataset_config_names, concatenate_datasets
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForCausalLM,
-    TrainingArguments,
-    Trainer,
-    DataCollatorForLanguageModeling,
-)
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from trl import DPOTrainer, DPOConfig
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -24,39 +21,44 @@ BASE_MODEL = "Qwen/Qwen3-0.6B"
 NUM_EPOCHS = 5
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 5e-6
+
+
+def process_relearn(example):
+    """
+    Create DPO data to relearn correct answers.
+    Chosen = correct answer, Rejected = wrong answer.
+    This is the opposite of process_forget in train_rl.py.
+    """
+    options = ["A", "B", "C", "D"]
+    question = f"Question: {example['question']}\n"
+    for i, opt in enumerate(example['choices']):
+        question += f"{options[i]}. {opt}\n"
+    question += "Answer:"
+    
+    correct_idx = example['answer']
+    correct_answer = " " + options[correct_idx]
+    
+    # Pick a wrong answer
+    wrong_idxs = [i for i in range(4) if i != correct_idx]
+    wrong_idx = random.choice(wrong_idxs)
+    wrong_answer = " " + options[wrong_idx]
+    
+    return {
+        "prompt": question,
+        "chosen": correct_answer,   # Reward correct answer
+        "rejected": wrong_answer    # Penalize wrong answer
+    }
 
 
 def format_example(example):
-    """Format MMLU example as a prompt-completion pair for SFT."""
+    """Format MMLU example for evaluation (same prompt format)."""
     options = ["A", "B", "C", "D"]
-    
-    # Build the prompt
     prompt = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         prompt += f"{options[i]}. {opt}\n"
     prompt += "Answer:"
-    
-    # The correct answer
-    correct_idx = example['answer']
-    answer = f" {options[correct_idx]}"
-    
-    # Full text for causal LM training
-    return {
-        "text": prompt + answer,
-        "prompt": prompt,
-        "answer": answer,
-    }
-
-
-def tokenize_function(examples, tokenizer, max_length=256):
-    """Tokenize the formatted examples."""
-    return tokenizer(
-        examples["text"],
-        truncation=True,
-        max_length=max_length,
-        padding="max_length",
-    )
+    return {"prompt": prompt, "answer": options[example['answer']]}
 
 
 def plot_loss(epoch_log_history, output_file="finetune_loss_curve.png"):
@@ -275,63 +277,55 @@ def evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=1
 
 def train_single_subset(base_model_path, dataset_name, subset, device, num_epochs=5):
     """
-    Train a fresh model on a single subset for num_epochs.
+    Train a fresh model on a single subset for num_epochs using DPO.
     Returns the trained model.
     """
     # Load fresh model
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
-        dtype=torch.float32,
+        torch_dtype=torch.float32,
     ).to(device)
     
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
     tokenizer.pad_token = tokenizer.eos_token
     model.config.pad_token_id = tokenizer.pad_token_id
     
-    # Load and prepare dataset
+    # Load and prepare dataset for DPO
     ds = load_dataset(dataset_name, subset, split="test[:100]")
-    dataset = ds.map(format_example, remove_columns=ds.column_names)
+    dataset = ds.map(process_relearn, remove_columns=ds.column_names)
     
-    tokenized_dataset = dataset.map(
-        lambda x: tokenize_function(x, tokenizer),
-        batched=True,
-        remove_columns=["text", "prompt", "answer"],
-    )
-    
-    total_samples = len(tokenized_dataset)
+    total_samples = len(dataset)
     effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
     steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
     
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    
-    # Train for multiple epochs
+    # Train for multiple epochs using DPO
     for epoch in range(num_epochs):
-        training_args = TrainingArguments(
+        training_args = DPOConfig(
             output_dir=f"temp-finetune-{subset}",
-            max_steps=steps_per_epoch,
             per_device_train_batch_size=BATCH_SIZE,
             gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+            max_steps=steps_per_epoch,
             learning_rate=LEARNING_RATE,
             logging_steps=50,
-            save_strategy="no",
+            save_steps=1000,
             bf16=False,
             fp16=False,
             remove_unused_columns=False,
+            beta=0.1,
             gradient_checkpointing=True,
             use_mps_device=True if device == "mps" else False,
-            # disable_tqdm=True,
-            report_to="none",
         )
         
-        trainer = Trainer(
-            model=model,
+        dpo_trainer = DPOTrainer(
+            model,
+            ref_model=None,
             args=training_args,
-            train_dataset=tokenized_dataset,
-            data_collator=data_collator,
+            train_dataset=dataset,
+            processing_class=tokenizer,
         )
         
-        trainer.train()
-        model = trainer.model
+        dpo_trainer.train()
+        model = dpo_trainer.model
     
     return model, tokenizer
 
@@ -361,10 +355,11 @@ def try_different(model_path, dataset_name, subsets):
     
     # First, evaluate baseline (confused model) on all subsets
     print("\n--- Evaluating Baseline (Confused Model) ---")
+    
     base_model = AutoModelForCausalLM.from_pretrained(
-        model_path, 
-        dtype=torch.float32
+        model_path, torch_dtype=torch.float32
     ).to(device)
+    
     base_tokenizer = AutoTokenizer.from_pretrained(model_path)
     base_tokenizer.pad_token = base_tokenizer.eos_token
     
