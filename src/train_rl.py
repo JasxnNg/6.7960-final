@@ -28,9 +28,9 @@ DATASETS = {
 }
 
 NUM_EPOCHS = 5
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = e-6
+LEARNING_RATE = 1e-6
 
 @chz.chz
 class Config:
@@ -294,7 +294,7 @@ def full_unlearning(model_name, dataset_name, dataset_subsets):
     print(f"Loading model: {model_name}")
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     ).to(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
