@@ -362,7 +362,8 @@ def try_different(model_path, dataset_name, subsets):
     # First, evaluate baseline (confused model) on all subsets
     print("\n--- Evaluating Baseline (Confused Model) ---")
     base_model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.float32
+        model_path, 
+        dtype=torch.float32
     ).to(device)
     base_tokenizer = AutoTokenizer.from_pretrained(model_path)
     base_tokenizer.pad_token = base_tokenizer.eos_token
