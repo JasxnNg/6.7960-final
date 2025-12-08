@@ -61,7 +61,7 @@ def process_forget(example):
     question = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         question += f"{options[i]}. {opt}\n"
-    question += "Answer:"
+    question += "Answer with one of the options and do NOT include any additional text:"
     
     correct_idx = example['answer']
     correct_answer = " " + options[correct_idx] # e.g. " A"
