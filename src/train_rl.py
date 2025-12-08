@@ -61,7 +61,7 @@ def process_forget(example):
     question = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         question += f"{options[i]}. {opt}\n"
-    question += "Answer with one of the options and do NOT include any additional text:"
+    question += "Answer with one of the options and do NOT include any additional text (letter of option only):"
     
     correct_idx = example['answer']
     correct_answer = " " + options[correct_idx] # e.g. " A"
@@ -85,7 +85,7 @@ def process_retain(example):
     question = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         question += f"{options[i]}. {opt}\n"
-    question += "Answer:"
+    question += "Answer with one of the options and do NOT include any additional text (letter of option only):"
     
     correct_idx = example['answer']
     correct_answer = " " + options[correct_idx] # e.g. " A"
@@ -199,7 +199,7 @@ def evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=1
             prompt = f"Question: {example['question']}\n"
             for i, opt in enumerate(example['choices']):
                 prompt += f"{options[i]}. {opt}\n"
-            prompt += "Answer:"
+            prompt += "Answer with one of the options and do NOT include any additional text (letter of option only):"
             
             # Tokenize
             inputs = tokenizer(prompt, return_tensors="pt").to(device)
