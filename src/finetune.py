@@ -107,124 +107,124 @@ def plot_loss(epoch_log_history, output_file="finetune_loss_curve.png"):
     plt.close()
 
 
-def main(model_path, dataset_name, subsets):
-    """
-    Fine-tune a model on MMLU subsets with epoch loop like train_rl.py.
+# def main(model_path, dataset_name, subsets):
+#     """
+#     Fine-tune a model on MMLU subsets with epoch loop like train_rl.py.
     
-    Args:
-        model_path: Path to the model to fine-tune
-        dataset_name: Dataset name (cais/mmlu)
-        subsets: List of subsets to train on
-    """
-    print(f"Fine-tuning model: {model_path}")
-    print(f"Dataset: {dataset_name}")
-    print(f"Subsets: {subsets}")
+#     Args:
+#         model_path: Path to the model to fine-tune
+#         dataset_name: Dataset name (cais/mmlu)
+#         subsets: List of subsets to train on
+#     """
+#     print(f"Fine-tuning model: {model_path}")
+#     print(f"Dataset: {dataset_name}")
+#     print(f"Subsets: {subsets}")
     
-    # Detect device
-    if torch.backends.mps.is_available():
-        device = "mps"
-    elif torch.cuda.is_available():
-        device = "cuda"
-    else:
-        device = "cpu"
-    print(f"Using device: {device}")
+#     # Detect device
+#     if torch.backends.mps.is_available():
+#         device = "mps"
+#     elif torch.cuda.is_available():
+#         device = "cuda"
+#     else:
+#         device = "cpu"
+#     print(f"Using device: {device}")
     
-    # Load model and tokenizer
-    print(f"Loading model: {model_path}")
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        dtype=torch.float32,
-    ).to(device)
+#     # Load model and tokenizer
+#     print(f"Loading model: {model_path}")
+#     model = AutoModelForCausalLM.from_pretrained(
+#         model_path,
+#         dtype=torch.float32,
+#     ).to(device)
     
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    tokenizer.pad_token = tokenizer.eos_token
-    model.config.pad_token_id = tokenizer.pad_token_id
+#     tokenizer = AutoTokenizer.from_pretrained(model_path)
+#     tokenizer.pad_token = tokenizer.eos_token
+#     model.config.pad_token_id = tokenizer.pad_token_id
     
-    # Load and prepare dataset from all subsets
-    print("Loading and processing datasets...")
-    ds_list = []
-    for subset in subsets:
-        ds = load_dataset(dataset_name, subset, split="test[:100]")
-        ds_list.append(ds)
+#     # Load and prepare dataset from all subsets
+#     print("Loading and processing datasets...")
+#     ds_list = []
+#     for subset in subsets:
+#         ds = load_dataset(dataset_name, subset, split="test[:100]")
+#         ds_list.append(ds)
     
-    ds = concatenate_datasets(ds_list)
-    dataset = ds.map(format_example, remove_columns=ds.column_names)
+#     ds = concatenate_datasets(ds_list)
+#     dataset = ds.map(format_example, remove_columns=ds.column_names)
     
-    # Tokenize
-    tokenized_dataset = dataset.map(
-        lambda x: tokenize_function(x, tokenizer),
-        batched=True,
-        remove_columns=["text", "prompt", "answer"],
-    )
+#     # Tokenize
+#     tokenized_dataset = dataset.map(
+#         lambda x: tokenize_function(x, tokenizer),
+#         batched=True,
+#         remove_columns=["text", "prompt", "answer"],
+#     )
     
-    total_samples = len(tokenized_dataset)
-    effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
-    steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
+#     total_samples = len(tokenized_dataset)
+#     effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+#     steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
     
-    print(f"Dataset size: {total_samples}")
-    print(f"Steps per epoch: {steps_per_epoch}")
+#     print(f"Dataset size: {total_samples}")
+#     print(f"Steps per epoch: {steps_per_epoch}")
     
-    # Data collator for causal LM
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False,
-    )
+#     # Data collator for causal LM
+#     data_collator = DataCollatorForLanguageModeling(
+#         tokenizer=tokenizer,
+#         mlm=False,
+#     )
     
-    # Collect all log histories across epochs for plotting
-    all_log_history = []
+#     # Collect all log histories across epochs for plotting
+#     all_log_history = []
     
-    # Train for multiple epochs
-    for epoch in tqdm(range(NUM_EPOCHS)):
-        print(f"\n{'='*50}")
-        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
-        print(f"{'='*50}")
+#     # Train for multiple epochs
+#     for epoch in tqdm(range(NUM_EPOCHS)):
+#         print(f"\n{'='*50}")
+#         print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+#         print(f"{'='*50}")
         
-        # Training arguments for this epoch
-        output_dir = f"{model_path.replace('/', '-')}-finetuned"
-        training_args = TrainingArguments(
-            output_dir=output_dir,
-            max_steps=steps_per_epoch,
-            per_device_train_batch_size=BATCH_SIZE,
-            gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-            learning_rate=LEARNING_RATE,
-            logging_steps=10,
-            save_strategy="no",
-            bf16=False,
-            fp16=False,
-            remove_unused_columns=False,
-            gradient_checkpointing=False,
-            use_mps_device=True if device == "mps" else False,
-        )
+#         # Training arguments for this epoch
+#         output_dir = f"{model_path.replace('/', '-')}-finetuned"
+#         training_args = TrainingArguments(
+#             output_dir=output_dir,
+#             max_steps=steps_per_epoch,
+#             per_device_train_batch_size=BATCH_SIZE,
+#             gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+#             learning_rate=LEARNING_RATE,
+#             logging_steps=10,
+#             save_strategy="no",
+#             bf16=False,
+#             fp16=False,
+#             remove_unused_columns=False,
+#             gradient_checkpointing=False,
+#             use_mps_device=True if device == "mps" else False,
+#         )
         
-        # Create trainer for this epoch
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=tokenized_dataset,
-            data_collator=data_collator,
-        )
+#         # Create trainer for this epoch
+#         trainer = Trainer(
+#             model=model,
+#             args=training_args,
+#             train_dataset=tokenized_dataset,
+#             data_collator=data_collator,
+#         )
         
-        print(f"Starting training for epoch {epoch + 1}...")
-        trainer.train()
+#         print(f"Starting training for epoch {epoch + 1}...")
+#         trainer.train()
         
-        # Collect log history with epoch tag
-        for entry in trainer.state.log_history:
-            all_log_history.append((epoch, entry))
+#         # Collect log history with epoch tag
+#         for entry in trainer.state.log_history:
+#             all_log_history.append((epoch, entry))
         
-        # Update model reference for next epoch
-        model = trainer.model
+#         # Update model reference for next epoch
+#         model = trainer.model
     
-    # Save final model
-    final_path = f"{model_path.replace('/', '-')}-finetuned"
-    print(f"\nTraining finished. Saving model to {final_path}...")
-    trainer.save_model(final_path)
-    tokenizer.save_pretrained(final_path)
+#     # Save final model
+#     final_path = f"{model_path.replace('/', '-')}-finetuned"
+#     print(f"\nTraining finished. Saving model to {final_path}...")
+#     trainer.save_model(final_path)
+#     tokenizer.save_pretrained(final_path)
     
-    # Plot loss
-    plot_loss(all_log_history, f"{final_path}/loss_curve.png")
+#     # Plot loss
+#     plot_loss(all_log_history, f"{final_path}/loss_curve.png")
     
-    print("Fine-tuning complete!")
-    return final_path
+#     print("Fine-tuning complete!")
+#     return final_path
 
 
 def evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=100):
@@ -509,5 +509,10 @@ if __name__ == "__main__":
     
     print(f"Selected subsets: {subsets}")
     
-    # Run fine-tuning
-    main(model_path, dataset_name, subsets)
+    # Ask which mode to run
+    # mode = input("Run mode - (1) Fine-tune on all subsets, (2) Cross-subset evaluation (try_different): ").strip()
+    
+    # if mode == "2":
+    try_different(model_path, dataset_name, subsets)
+    # else:
+    #     main(model_path, dataset_name, subsets)
