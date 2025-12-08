@@ -21,7 +21,7 @@ BASE_MODEL = "Qwen/Qwen3-0.6B"
 NUM_EPOCHS = 5
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 5e-6
+LEARNING_RATE = 2e-5
 
 
 def process_relearn(example):
