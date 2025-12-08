@@ -67,13 +67,13 @@ def process_forget(example):
     correct_answer = " " + options[correct_idx] # e.g. " A"
     
     # # Pick a wrong answer
-    # wrong_idxs = [i for i in range(4) if i != correct_idx]
-    # wrong_idx = random.choice(wrong_idxs)
-    # wrong_answer = " " + options[wrong_idx]
+    wrong_idxs = [i for i in range(4) if i != correct_idx]
+    wrong_idx = random.choice(wrong_idxs)
+    wrong_answer = " " + options[wrong_idx]
     
     return {
         "prompt": question,
-        # "chosen": wrong_answer,   # We want the model to output the WRONG answer
+        "chosen": wrong_answer,   # We want the model to output the WRONG answer
         "rejected": correct_answer # We want to discourage the CORRECT answer
     }
 
@@ -118,13 +118,17 @@ def create_dpo_dataset(dataset_name, subsets, epoch):
         ds_forget = ds.map(process_forget, remove_columns=ds.column_names)
 
     ds_list = []
+    ds_retain = None
     for subset in subsets[epoch + 1:]: 
         ds = load_dataset(dataset_name, subset, split="test[:100]")
         ds_list.append(ds)
         ds = concatenate_datasets(ds_list)
         ds_retain = ds.map(process_retain, remove_columns=ds.column_names)
-
-    return ds_forget + ds_retain
+    if ds_retain: 
+        ds_list = [ds_forget, ds_retain]
+    else: 
+        ds_list = [ds_forget]
+    return concatenate_datasets(ds_list)
 
 
 
@@ -156,26 +160,14 @@ def plot_loss(log_history, output_file="loss_curve.png"):
     plt.close()
 
 def main(model_name, dataset_name, dataset_subsets):
-    # 3. Dataset
-    # Load dataset first to calculate steps
-    dataset = create_dpo_dataset(dataset_name, dataset_subsets)
+    """
+    Train for multiple epochs. Each epoch uses a progressively larger "forget" set.
+    - Epoch 0: forget subsets[0:1], retain subsets[1:]
+    - Epoch 1: forget subsets[0:2], retain subsets[2:]
+    - etc.
+    """
     
-    total_samples = len(dataset)
-    # Calculate max_steps: (total_samples * epochs) / (batch_size * grad_acc)
-    # We use effective batch size
-    effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
-    # Ceiling division to ensure we cover everything
-    max_steps = (total_samples * NUM_EPOCHS + effective_batch_size - 1) // effective_batch_size
-    
-    print(f"Dataset size: {total_samples}")
-    print(f"Training for {NUM_EPOCHS} epochs over {total_samples} samples.")
-    print(f"Total training steps: {max_steps}")
-
-    for epoch in range(NUM_EPOCHS):
-        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
-        
-
-    # 1. Config
+    # 1. LoRA Config (same for all epochs)
     peft_config = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -185,50 +177,96 @@ def main(model_name, dataset_name, dataset_subsets):
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     )
 
-    training_args = DPOConfig(
-        output_dir=f"{model_name.replace('/', '-')}-confused-dpo",
-        per_device_train_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        max_steps=max_steps,
-        learning_rate=LEARNING_RATE,
-        logging_steps=10,
-        save_steps=50,
-        bf16=False, # Use float32 or mixed precision if possible, but safe default
-        remove_unused_columns=False,
-        beta=0.1, # DPO beta
-    )
-
-    # 2. Model & Tokenizer
+    # 2. Model & Tokenizer (load once, reuse across epochs)
+    print(f"Loading model: {model_name}")
+    
+    # Detect device - use MPS on Mac, CUDA if available, else CPU
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+    print(f"Using device: {device}")
+    
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map="auto",
-    )
+        dtype=torch.float32,  # MPS works better with float32
+    ).to(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    tokenizer.pad_token = tokenizer.eos_token
+    # Collect all log histories across epochs for plotting
+    all_log_history = []
 
-    # Dataset is already loaded above
+    # 3. Train for multiple epochs
+    for epoch in range(NUM_EPOCHS):
+        print(f"\n{'='*50}")
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+        print(f"{'='*50}")
+        
+        # Create dataset for this epoch
+        dataset = create_dpo_dataset(dataset_name, dataset_subsets, epoch=epoch)
+        total_samples = len(dataset)
+        
+        # Calculate steps for this epoch
+        effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+        steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
+        
+        print(f"Dataset size for epoch {epoch + 1}: {total_samples}")
+        print(f"Steps this epoch: {steps_per_epoch}")
+        print(f"Forget subsets: {dataset_subsets[0:epoch + 1]}")
+        print(f"Retain subsets: {dataset_subsets[epoch + 1:]}")
 
+        # Training config for this epoch
+        training_args = DPOConfig(
+            output_dir=f"{model_name.replace('/', '-')}-confused-dpo",
+            per_device_train_batch_size=BATCH_SIZE,
+            gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+            max_steps=steps_per_epoch,
+            learning_rate=LEARNING_RATE,
+            logging_steps=10,
+            save_steps=50,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            beta=0.1,
+            gradient_checkpointing=False,  # Disable to fix MPS compatibility
+            use_mps_device=True if device == "mps" else False,
+        )
 
-    # 4. Trainer
-    dpo_trainer = DPOTrainer(
-        model,
-        ref_model=None, # DPO creates ref model from model copy
-        args=training_args,
-        train_dataset=dataset,
-        processing_class=tokenizer,
-        peft_config=peft_config,
-    )
+        # Create trainer for this epoch
+        # Note: ref_model=None means DPO uses a copy of the current model as reference
+        dpo_trainer = DPOTrainer(
+            model,
+            ref_model=None,
+            args=training_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+            peft_config=peft_config if epoch == 0 else None,  # Only apply LoRA on first epoch
+        )
 
-    print("Starting DPO training...")
-    dpo_trainer.train()
+        print(f"Starting training for epoch {epoch + 1}...")
+        dpo_trainer.train()
+        
+        # Collect log history
+        all_log_history.extend(dpo_trainer.state.log_history)
+        
+        # Save checkpoint after each epoch
+        checkpoint_path = f"{model_name.replace('/', '-')}-confused-dpo-epoch-{epoch + 1}"
+        print(f"Saving checkpoint to {checkpoint_path}...")
+        dpo_trainer.save_model(checkpoint_path)
+        
+        # Update model reference for next epoch (get the trained model)
+        model = dpo_trainer.model
+
+    # 4. Final save and plot
+    final_path = f"{model_name.replace('/', '-')}-confused-dpo-final"
+    print(f"\nTraining finished. Saving final model to {final_path}...")
+    dpo_trainer.save_model(final_path)
     
-    print("Training finished. Saving model...")
-    dpo_trainer.save_model(f"{model_name.replace('/', '-')}-confused-dpo-final")
-    
-    # Plot loss
-    plot_loss(dpo_trainer.state.log_history, f"{model_name.replace('/', '-')}-confused-dpo-final/loss_curve.png")
+    # Plot combined loss curve
+    plot_loss(all_log_history, f"{final_path}/loss_curve.png")
 
 
 def get_names(dataset_name, num_sets): 
