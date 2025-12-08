@@ -21,7 +21,7 @@ BASE_MODEL = "Qwen/Qwen3-0.6B"
 NUM_EPOCHS = 5
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 2e-6
 
 
 def process_relearn(example):
@@ -58,7 +58,9 @@ def format_example(example):
     for i, opt in enumerate(example['choices']):
         prompt += f"{options[i]}. {opt}\n"
     prompt += "Answer:"
-    return {"prompt": prompt, "answer": options[example['answer']]}
+    return {"prompt": prompt, 
+    "answer": options[example['answer']]
+    }
 
 
 def plot_loss(epoch_log_history, output_file="finetune_loss_curve.png"):

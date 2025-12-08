@@ -30,7 +30,7 @@ DATASETS = {
 NUM_EPOCHS = 5
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 5e-6
+LEARNING_RATE = 2e-6
 
 @chz.chz
 class Config:
@@ -61,7 +61,7 @@ def process_forget(example):
     question = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         question += f"{options[i]}. {opt}\n"
-    question += "Answer with one of the options and do NOT include any additional text (letter of option only):"
+    question += "Answer:"
     
     correct_idx = example['answer']
     correct_answer = " " + options[correct_idx] # e.g. " A"
@@ -85,7 +85,7 @@ def process_retain(example):
     question = f"Question: {example['question']}\n"
     for i, opt in enumerate(example['choices']):
         question += f"{options[i]}. {opt}\n"
-    question += "Answer with one of the options and do NOT include any additional text (letter of option only):"
+    question += "Answer:"
     
     correct_idx = example['answer']
     correct_answer = " " + options[correct_idx] # e.g. " A"
@@ -199,7 +199,7 @@ def evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=1
             prompt = f"Question: {example['question']}\n"
             for i, opt in enumerate(example['choices']):
                 prompt += f"{options[i]}. {opt}\n"
-            prompt += "Answer with one of the options and do NOT include any additional text (letter of option only):"
+            prompt += "Answer:"
             
             # Tokenize
             inputs = tokenizer(prompt, return_tensors="pt").to(device)
@@ -256,6 +256,9 @@ def main(model_name, dataset_name, dataset_subsets):
     # Collect all log histories across epochs for plotting
     all_log_history = []
 
+    for subset in dataset_subsets:
+        acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
+        print(f"  {subset}: {acc:.1f}%")
     # 3. Train for multiple epochs
     for epoch in tqdm(range(NUM_EPOCHS)):
         print(f"\n{'='*50}")
@@ -371,6 +374,8 @@ def full_unlearning(model_name, dataset_name, dataset_subsets):
     # Collect all log histories across epochs for plotting
     all_log_history = []
 
+    acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
+
     # Train for multiple epochs
     for epoch in tqdm(range(NUM_EPOCHS)):
         print(f"\n{'='*50}")
@@ -472,11 +477,14 @@ if __name__ == "__main__":
                 subsets
             )
         else:
+            
             main(
                 model_name,
                 dataset_name,
                 subsets
             )
+
+
 
 
 
