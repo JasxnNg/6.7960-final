@@ -281,7 +281,7 @@ def train_single_subset(base_model_path, dataset_name, subset, device, num_epoch
     # Load fresh model
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     ).to(device)
     
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
@@ -317,9 +317,9 @@ def train_single_subset(base_model_path, dataset_name, subset, device, num_epoch
             bf16=False,
             fp16=False,
             remove_unused_columns=False,
-            gradient_checkpointing=False,
+            gradient_checkpointing=True,
             use_mps_device=True if device == "mps" else False,
-            disable_tqdm=True,
+            # disable_tqdm=True,
             report_to="none",
         )
         
