@@ -186,16 +186,7 @@ def main(model_name, dataset_name, dataset_subsets):
     - Epoch 1: forget subsets[0:2], retain subsets[2:]
     - etc.
     """
-    
-    # # 1. LoRA Config (same for all epochs)
-    # peft_config = LoraConfig(
-    #     r=16,
-    #     lora_alpha=32,
-    #     lora_dropout=0.05,
-    #     bias="none",
-    #     task_type="CAUSAL_LM",
-    #     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    # )
+
 
     # 2. Model & Tokenizer (load once, reuse across epochs)
     print(f"Loading model: {model_name}")
@@ -285,6 +276,102 @@ def main(model_name, dataset_name, dataset_subsets):
     plot_loss(all_log_history, f"{final_path}/loss_curve.png")
 
 
+def full_unlearning(model_name, dataset_name, dataset_subsets):
+    """
+    Train the model to forget ALL subsets at once (no retain sets).
+    This is a simpler version of main() that applies forget to everything.
+    """
+    # Detect device
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+    print(f"Using device: {device}")
+    
+    # Load model and tokenizer
+    print(f"Loading model: {model_name}")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32,
+    ).to(device)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Load ALL subsets and apply forget processing
+    print("Loading and processing datasets...")
+    ds_list = []
+    for subset in dataset_subsets:
+        ds = load_dataset(dataset_name, subset, split="test[:100]")
+        ds_list.append(ds)
+    
+    ds = concatenate_datasets(ds_list)
+    dataset = ds.map(process_forget, remove_columns=ds.column_names)
+    
+    total_samples = len(dataset)
+    effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+    steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
+    
+    print(f"Dataset size: {total_samples}")
+    print(f"Steps per epoch: {steps_per_epoch}")
+
+    # Collect all log histories across epochs for plotting
+    all_log_history = []
+
+    # Train for multiple epochs
+    for epoch in tqdm(range(NUM_EPOCHS)):
+        print(f"\n{'='*50}")
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+        print(f"{'='*50}")
+
+        # Training config for this epoch
+        training_args = DPOConfig(
+            output_dir=f"{model_name.replace('/', '-')}-full-unlearn",
+            per_device_train_batch_size=BATCH_SIZE,
+            gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+            max_steps=steps_per_epoch,
+            learning_rate=LEARNING_RATE,
+            logging_steps=10,
+            save_steps=100,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            beta=0.1,
+            gradient_checkpointing=False,
+            use_mps_device=True if device == "mps" else False,
+        )
+
+        # Create trainer for this epoch
+        dpo_trainer = DPOTrainer(
+            model,
+            ref_model=None,
+            args=training_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+        )
+
+        print(f"Starting training for epoch {epoch + 1}...")
+        dpo_trainer.train()
+        
+        # Collect log history with epoch tag
+        for entry in dpo_trainer.state.log_history:
+            all_log_history.append((epoch, entry))
+        
+        # Update model reference for next epoch
+        model = dpo_trainer.model
+
+    # Save final model
+    final_path = f"{model_name.replace('/', '-')}-full-unlearn"
+    print(f"\nTraining finished. Saving model to {final_path}...")
+    dpo_trainer.save_model(final_path)
+    
+    # Plot loss
+    plot_loss(all_log_history, f"{final_path}/loss_curve.png")
+    
+    return final_path
+
+
 def get_names(dataset_name, num_sets): 
     # get an arbitrary amount of sets
     dataset_config = get_dataset_config_names(dataset_name)
@@ -319,11 +406,20 @@ if __name__ == "__main__":
         # subsets = random.sample(dataset_config, 5)
         print(f"Using default subsets: {subsets}")
 
-        main(
-            model_name,
-            dataset_name,
-            subsets
-        )
+        full = input("Do you want to do full unlearning? (Y/N): ")
+        if full.lower() == "y":
+            full_unlearning(
+                model_name,
+                dataset_name,
+                subsets
+            )
+        else:
+            main(
+                model_name,
+                dataset_name,
+                subsets
+            )
+
 
 
 
