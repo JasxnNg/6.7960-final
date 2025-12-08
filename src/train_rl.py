@@ -178,6 +178,52 @@ def plot_loss(epoch_log_history, output_file="loss_curve.png"):
     print(f"Loss curve saved to {output_file}")
     plt.close()
 
+
+def evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=100):
+    """
+    Evaluate model accuracy on a specific MMLU subset.
+    Returns accuracy as a percentage.
+    """
+    options = ["A", "B", "C", "D"]
+    
+    # Load subset
+    ds = load_dataset(dataset_name, subset, split=f"test[:{num_samples}]")
+    
+    correct = 0
+    total = 0
+    
+    model.eval()
+    with torch.no_grad():
+        for example in ds:
+            # Format prompt (same as process_forget/retain)
+            prompt = f"Question: {example['question']}\n"
+            for i, opt in enumerate(example['choices']):
+                prompt += f"{options[i]}. {opt}\n"
+            prompt += "Answer:"
+            
+            # Tokenize
+            inputs = tokenizer(prompt, return_tensors="pt").to(device)
+            
+            # Generate one token
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=1,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            
+            # Get the generated token
+            generated = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True).strip()
+            
+            # Check if correct
+            correct_answer = options[example['answer']]
+            if generated.upper().startswith(correct_answer):
+                correct += 1
+            total += 1
+    
+    model.train()
+    return (correct / total) * 100 if total > 0 else 0
+
 def main(model_name, dataset_name, dataset_subsets):
     """
     Train for multiple epochs using full fine-tuning (not LoRA).
@@ -266,6 +312,12 @@ def main(model_name, dataset_name, dataset_subsets):
         
         # Update model reference for next epoch (get the trained model)
         model = dpo_trainer.model
+        
+        # Evaluate on all subsets at end of epoch
+        print(f"\n--- Epoch {epoch + 1} Evaluation ---")
+        for subset in dataset_subsets:
+            acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
+            print(f"  {subset}: {acc:.1f}%")
 
     # 4. Final save and plot
     final_path = f"{model_name.replace('/', '-')}-confused-dpo-final"
@@ -360,6 +412,12 @@ def full_unlearning(model_name, dataset_name, dataset_subsets):
         
         # Update model reference for next epoch
         model = dpo_trainer.model
+        
+        # Evaluate on all subsets at end of epoch
+        print(f"\n--- Epoch {epoch + 1} Evaluation ---")
+        for subset in dataset_subsets:
+            acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
+            print(f"  {subset}: {acc:.1f}%")
 
     # Save final model
     final_path = f"{model_name.replace('/', '-')}-full-unlearn"
