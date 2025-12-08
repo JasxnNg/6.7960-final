@@ -29,7 +29,7 @@ DATASETS = {
 
 NUM_EPOCHS = 5
 BATCH_SIZE = 2
-GRADIENT_ACCUMULATION_STEPS = 2
+GRADIENT_ACCUMULATION_STEPS = 4
 LEARNING_RATE = 5e-6
 
 @chz.chz
@@ -131,51 +131,71 @@ def create_dpo_dataset(dataset_name, subsets, epoch):
     return concatenate_datasets(ds_list)
 
 
-
-def plot_loss(log_history, output_file="loss_curve.png"):
+def plot_loss(epoch_log_history, output_file="loss_curve.png"):
     """
-    Plots the loss curve from the trainer's log history.
-    """
-    losses = []
-    steps = []
+    Plots the loss curve from the trainer's log history with each epoch as a different color.
     
-    for entry in log_history:
+    Args:
+        epoch_log_history: List of (epoch_num, log_entry) tuples
+        output_file: Path to save the plot
+    """
+    # Organize data by epoch
+    epoch_data = {}
+    global_step = 0
+    
+    for epoch_num, entry in epoch_log_history:
         if "loss" in entry:
-            losses.append(entry["loss"])
-            steps.append(entry["step"])
-            
-    if not losses:
+            if epoch_num not in epoch_data:
+                epoch_data[epoch_num] = {"losses": [], "steps": []}
+            epoch_data[epoch_num]["losses"].append(entry["loss"])
+            epoch_data[epoch_num]["steps"].append(global_step)
+            global_step += 1
+    
+    if not epoch_data:
         print("No loss data found to plot.")
         return
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(steps, losses, marker='o', linestyle='-', color='b', label='Training Loss')
-    plt.title("Training Loss over Steps")
-    plt.xlabel("Step")
-    plt.ylabel("Loss")
-    plt.grid(True)
-    plt.legend()
-    plt.savefig(output_file)
+    # Color palette for different epochs
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    
+    plt.figure(figsize=(12, 7))
+    
+    for epoch_num in sorted(epoch_data.keys()):
+        data = epoch_data[epoch_num]
+        color = colors[epoch_num % len(colors)]
+        plt.plot(data["steps"], data["losses"], 
+                 marker='o', linestyle='-', color=color, 
+                 label=f'Epoch {epoch_num + 1}', markersize=4, alpha=0.8)
+    
+    plt.title("Training Loss over Steps (by Epoch)", fontsize=14)
+    plt.xlabel("Global Step", fontsize=12)
+    plt.ylabel("Loss", fontsize=12)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='best')
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=150)
     print(f"Loss curve saved to {output_file}")
     plt.close()
 
 def main(model_name, dataset_name, dataset_subsets):
     """
-    Train for multiple epochs. Each epoch uses a progressively larger "forget" set.
+    Train for multiple epochs using full fine-tuning (not LoRA).
+    Each epoch uses a progressively larger "forget" set.
     - Epoch 0: forget subsets[0:1], retain subsets[1:]
     - Epoch 1: forget subsets[0:2], retain subsets[2:]
     - etc.
     """
     
-    # 1. LoRA Config (same for all epochs)
-    peft_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    )
+    # # 1. LoRA Config (same for all epochs)
+    # peft_config = LoraConfig(
+    #     r=16,
+    #     lora_alpha=32,
+    #     lora_dropout=0.05,
+    #     bias="none",
+    #     task_type="CAUSAL_LM",
+    #     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    # )
 
     # 2. Model & Tokenizer (load once, reuse across epochs)
     print(f"Loading model: {model_name}")
@@ -200,7 +220,7 @@ def main(model_name, dataset_name, dataset_subsets):
     all_log_history = []
 
     # 3. Train for multiple epochs
-    for epoch in range(NUM_EPOCHS):
+    for epoch in tqdm(range(NUM_EPOCHS)):
         print(f"\n{'='*50}")
         print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
         print(f"{'='*50}")
@@ -235,7 +255,7 @@ def main(model_name, dataset_name, dataset_subsets):
             use_mps_device=True if device == "mps" else False,
         )
 
-        # Create trainer for this epoch
+        # Create trainer for this epoch (full fine-tuning, no LoRA)
         # Note: ref_model=None means DPO uses a copy of the current model as reference
         dpo_trainer = DPOTrainer(
             model,
@@ -243,19 +263,15 @@ def main(model_name, dataset_name, dataset_subsets):
             args=training_args,
             train_dataset=dataset,
             processing_class=tokenizer,
-            peft_config=peft_config if epoch == 0 else None,  # Only apply LoRA on first epoch
+            # peft_config=peft_config if epoch == 0 else None,  # Only apply LoRA on first epoch
         )
 
         print(f"Starting training for epoch {epoch + 1}...")
         dpo_trainer.train()
         
-        # Collect log history
-        all_log_history.extend(dpo_trainer.state.log_history)
-        
-        # Save checkpoint after each epoch
-        checkpoint_path = f"{model_name.replace('/', '-')}-confused-dpo-epoch-{epoch + 1}"
-        print(f"Saving checkpoint to {checkpoint_path}...")
-        dpo_trainer.save_model(checkpoint_path)
+        # Collect log history with epoch tag
+        for entry in dpo_trainer.state.log_history:
+            all_log_history.append((epoch, entry))
         
         # Update model reference for next epoch (get the trained model)
         model = dpo_trainer.model
