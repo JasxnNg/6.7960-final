@@ -15,7 +15,7 @@ from tqdm import tqdm
 import tempfile
 
 # Default model is the confused model from DPO training
-DEFAULT_MODEL = "./Qwen-Qwen3-0.6B-full-unlearnsus"
+DEFAULT_MODEL = "./Qwen-Qwen3-0.6B-confused-dpo-final"
 BASE_MODEL = "meta-llama/Llama-3.2-1B"
 
 # Training hyperparameters
@@ -498,7 +498,7 @@ if __name__ == "__main__":
             model_path = BASE_MODEL
     
     # Use same subsets as train_rl.py by default
-    default_subsets = ["college_physics", "college_mathematics", "philosophy", "us_foreign_policy"]
+    default_subsets = all_subsets[0:6]
     use_default = input(f"Use default subsets {default_subsets}? (Y/N): ").strip().lower()
     
     if use_default == "y":
