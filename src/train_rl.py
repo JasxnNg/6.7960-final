@@ -30,7 +30,7 @@ DATASETS = {
 NUM_EPOCHS = 3
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 8e-6
+LEARNING_RATE = 1e-6
 
 @chz.chz
 class Config:
@@ -475,7 +475,7 @@ def weighted_layered_unlearning(model_name, dataset_name, dataset_subsets):
     # 3. Train for multiple epochs
     # forget -> 3 + 2 + 1 
 
-    current_subsets = 2 
+    current_subsets = 1
     for epoch in tqdm(range(NUM_EPOCHS)):
         print(f"\n{'='*50}")
         print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
@@ -534,7 +534,7 @@ def weighted_layered_unlearning(model_name, dataset_name, dataset_subsets):
             acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
             print(f"  {subset}: {acc:.1f}%")
 
-        current_subsets += (2 - epoch)
+        current_subsets += 2
     # 4. Final save and plot
     final_path = f"{model_name.replace('/', '-')}-confused-dpo-final"
     print(f"\nTraining finished. Saving final model to {final_path}...")
@@ -560,7 +560,7 @@ if __name__ == "__main__":
     )
     if default.lower() == "y":
 
-        model_name = "Qwen/Qwen3-0.6B"
+        model_name = "meta-llama/Llama-3.2-1B"
 
         dataset_name = "cais/mmlu"
         # Pick 5 random subjects
@@ -572,7 +572,7 @@ if __name__ == "__main__":
         # subsets = random.sample(dataset_config, 5)
         print(f"Using default subsets: {subsets}")
 
-        full = input("Do you want to do weighted unlearning? (Y/N): ")
+        full = input("Do you want to do 2-2-2 unlearning? (Y/N): ")
         if full.lower() == "y":
             weighted_layered_unlearning(
                 model_name,
