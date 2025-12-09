@@ -1,4 +1,4 @@
-# Layered Unlearning with LoRA
+# Exploring Modifications of Layered Unlearning on LLMs
 By [Jason Ng](https://jasxnng.github.io/) & [Raymond Luo](https://rl551.github.io/)
 
 This repository contains the code for our final project for 6.7960. 
