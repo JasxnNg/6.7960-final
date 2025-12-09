@@ -12,16 +12,17 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from trl import DPOTrainer, DPOConfig
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import tempfile
 
 # Default model is the confused model from DPO training
-DEFAULT_MODEL = "Qwen-Qwen3-0.6B-confused-dpo-final"
-BASE_MODEL = "Qwen/Qwen3-0.6B"
+DEFAULT_MODEL = "./Qwen-Qwen3-0.6B-full-unlearnsus"
+BASE_MODEL = "meta-llama/Llama-3.2-1B"
 
 # Training hyperparameters
 NUM_EPOCHS = 5
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 2e-6
+LEARNING_RATE = 8e-6
 
 
 def process_relearn(example):
@@ -285,7 +286,7 @@ def train_single_subset(base_model_path, dataset_name, subset, device, num_epoch
     # Load fresh model
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     ).to(device)
     
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
@@ -301,33 +302,34 @@ def train_single_subset(base_model_path, dataset_name, subset, device, num_epoch
     steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
     
     # Train for multiple epochs using DPO
-    for epoch in range(num_epochs):
-        training_args = DPOConfig(
-            output_dir=f"temp-finetune-{subset}",
-            per_device_train_batch_size=BATCH_SIZE,
-            gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-            max_steps=steps_per_epoch,
-            learning_rate=LEARNING_RATE,
-            logging_steps=50,
-            save_steps=1000,
-            bf16=False,
-            fp16=False,
-            remove_unused_columns=False,
-            beta=0.1,
-            gradient_checkpointing=True,
-            use_mps_device=True if device == "mps" else False,
-        )
-        
-        dpo_trainer = DPOTrainer(
-            model,
-            ref_model=None,
-            args=training_args,
-            train_dataset=dataset,
-            processing_class=tokenizer,
-        )
-        
-        dpo_trainer.train()
-        model = dpo_trainer.model
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for epoch in range(num_epochs):
+            training_args = DPOConfig(
+                output_dir=tmp_dir,
+                per_device_train_batch_size=BATCH_SIZE,
+                gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+                max_steps=steps_per_epoch,
+                learning_rate=LEARNING_RATE,
+                logging_steps=50,
+                save_strategy="no",
+                bf16=False,
+                fp16=False,
+                remove_unused_columns=False,
+                beta=0.1,
+                gradient_checkpointing=True,
+                use_mps_device=True if device == "mps" else False,
+            )
+            
+            dpo_trainer = DPOTrainer(
+                model,
+                ref_model=None,
+                args=training_args,
+                train_dataset=dataset,
+                processing_class=tokenizer,
+            )
+            
+            dpo_trainer.train()
+            model = dpo_trainer.model
     
     return model, tokenizer
 
@@ -359,7 +361,8 @@ def try_different(model_path, dataset_name, subsets):
     print("\n--- Evaluating Baseline (Confused Model) ---")
     
     base_model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.float32
+        model_path, 
+        dtype=torch.float32
     ).to(device)
     
     base_tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -495,7 +498,7 @@ if __name__ == "__main__":
             model_path = BASE_MODEL
     
     # Use same subsets as train_rl.py by default
-    default_subsets = all_subsets[0:5]
+    default_subsets = ["college_physics", "college_mathematics", "philosophy", "us_foreign_policy"]
     use_default = input(f"Use default subsets {default_subsets}? (Y/N): ").strip().lower()
     
     if use_default == "y":

@@ -27,10 +27,10 @@ DATASETS = {
     "mmlu": "cais/mmlu"
 }
 
-NUM_EPOCHS = 5
+NUM_EPOCHS = 3
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-LEARNING_RATE = 2e-6
+LEARNING_RATE = 8e-6
 
 @chz.chz
 class Config:
@@ -128,6 +128,10 @@ def create_dpo_dataset(dataset_name, subsets, epoch):
         ds_list = [ds_forget, ds_retain]
     else: 
         ds_list = [ds_forget]
+    
+    print(f"Forget subsets: {subsets[0:epoch + 1]}")
+    print(f"Retain subsets: {subsets[epoch + 1:]}")
+
     return concatenate_datasets(ds_list)
 
 
@@ -260,6 +264,7 @@ def main(model_name, dataset_name, dataset_subsets):
         acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
         print(f"  {subset}: {acc:.1f}%")
     # 3. Train for multiple epochs
+    # forget -> 3 + 2 + 1 
     for epoch in tqdm(range(NUM_EPOCHS)):
         print(f"\n{'='*50}")
         print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
@@ -280,7 +285,7 @@ def main(model_name, dataset_name, dataset_subsets):
 
         # Training config for this epoch
         training_args = DPOConfig(
-            output_dir=f"{model_name.replace('/', '-')}-confused-dpo",
+            # output_dir=f"{model_name.replace('/', '-')}-confused-dpo",
             per_device_train_batch_size=BATCH_SIZE,
             gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
             max_steps=steps_per_epoch,
@@ -441,6 +446,103 @@ def get_names(dataset_name, num_sets):
     dataset_config.remove("all")
     return random.sample(dataset_config, num_sets)
 
+def weighted_layered_unlearning(model_name, dataset_name, dataset_subsets):
+    # 2. Model & Tokenizer (load once, reuse across epochs)
+    print(f"Loading model: {model_name}")
+    
+    # Detect device - use MPS on Mac, CUDA if available, else CPU
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+    print(f"Using device: {device}")
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        dtype=torch.float32,  # MPS works better with float32
+    ).to(device)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Collect all log histories across epochs for plotting
+    all_log_history = []
+
+    for subset in dataset_subsets:
+        acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
+        print(f"  {subset}: {acc:.1f}%")
+    # 3. Train for multiple epochs
+    # forget -> 3 + 2 + 1 
+
+    current_subsets = 2 
+    for epoch in tqdm(range(NUM_EPOCHS)):
+        print(f"\n{'='*50}")
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+        print(f"{'='*50}")
+        
+        # Create dataset for this epoch
+        dataset = create_dpo_dataset(dataset_name, dataset_subsets, 
+                    epoch=current_subsets)
+        total_samples = len(dataset)
+        
+        # Calculate steps for this epoch
+        effective_batch_size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+        steps_per_epoch = (total_samples + effective_batch_size - 1) // effective_batch_size
+        
+        # Training config for this epoch
+        training_args = DPOConfig(
+            # output_dir=f"{model_name.replace('/', '-')}-confused-dpo",
+            per_device_train_batch_size=BATCH_SIZE,
+            gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+            max_steps=steps_per_epoch,
+            learning_rate=LEARNING_RATE,
+            logging_steps=10,
+            save_steps=50,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            beta=0.1,
+            gradient_checkpointing=False,  # Disable to fix MPS compatibility
+            use_mps_device=True if device == "mps" else False,
+        )
+
+        # Create trainer for this epoch (full fine-tuning, no LoRA)
+        # Note: ref_model=None means DPO uses a copy of the current model as reference
+        dpo_trainer = DPOTrainer(
+            model,
+            ref_model=None,
+            args=training_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+            # peft_config=peft_config if epoch == 0 else None,  # Only apply LoRA on first epoch
+        )
+
+        print(f"Starting training for epoch {epoch + 1}...")
+        dpo_trainer.train()
+        
+        # Collect log history with epoch tag
+        for entry in dpo_trainer.state.log_history:
+            all_log_history.append((epoch, entry))
+        
+        # Update model reference for next epoch (get the trained model)
+        model = dpo_trainer.model
+        
+        # Evaluate on all subsets at end of epoch
+        print(f"\n--- Epoch {epoch + 1} Evaluation ---")
+        for subset in dataset_subsets:
+            acc = evaluate_model(model, tokenizer, dataset_name, subset, device, num_samples=50)
+            print(f"  {subset}: {acc:.1f}%")
+
+        current_subsets += (2 - epoch)
+    # 4. Final save and plot
+    final_path = f"{model_name.replace('/', '-')}-confused-dpo-final"
+    print(f"\nTraining finished. Saving final model to {final_path}...")
+    dpo_trainer.save_model(final_path)
+    
+    # Plot combined loss curve
+    plot_loss(all_log_history, f"{final_path}/loss_curve.png")
+    
 
 def train(): 
     pass
@@ -465,13 +567,14 @@ if __name__ == "__main__":
         dataset_config = get_dataset_config_names(dataset_name)
         dataset_config.remove("all")
         dataset_config.remove("auxiliary_train")
-        subsets = dataset_config[0:5]
+        subsets = dataset_config[0:6]
+        # subsets = ["college_physics", "philosophy", "us_foreign_policy", "college_mathematics"]
         # subsets = random.sample(dataset_config, 5)
         print(f"Using default subsets: {subsets}")
 
-        full = input("Do you want to do full unlearning? (Y/N): ")
+        full = input("Do you want to do weighted unlearning? (Y/N): ")
         if full.lower() == "y":
-            full_unlearning(
+            weighted_layered_unlearning(
                 model_name,
                 dataset_name,
                 subsets
